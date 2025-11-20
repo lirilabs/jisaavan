@@ -1,6 +1,6 @@
 const axios = require("axios");
 
-// Clean Saavn JSON wrapper
+// Clean Saavn wrapped JSON
 function cleanJSON(input) {
   if (typeof input === "string") {
     let data = input.trim();
@@ -14,6 +14,11 @@ function cleanJSON(input) {
   return input;
 }
 
+// Extract token from perma_url
+function getToken(perma_url) {
+  return perma_url.split("/").pop();
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Content-Type", "application/json");
@@ -21,7 +26,7 @@ module.exports = async (req, res) => {
   try {
     const lang = (req.query.lang || "hindi").toLowerCase();
 
-    // Full URLs EXACTLY as you said
+    // Full URLs EXACTLY as you provided
     const langURL = {
       hindi:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
       english: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
@@ -30,24 +35,55 @@ module.exports = async (req, res) => {
       punjabi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
       marathi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
 
-      // Tamil only uses wap6dot0
+      // Tamil only
       tamil:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=wap6dot0"
     };
 
-    const url = langURL[lang] || langURL["hindi"];
-
-    // Fetch RAW charts JSON
-    const response = await axios.get(url, {
+    // 1. Fetch raw charts
+    const raw = await axios.get(langURL[lang], {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    const data = cleanJSON(response.data);
+    const charts = cleanJSON(raw.data);
 
-    // Return raw response
+    // 2. For each chart → fetch playlist details
+    const enrichedCharts = await Promise.all(
+      charts.map(async chart => {
+        const token = getToken(chart.perma_url);
+
+        const detailURL =
+          `https://www.jiosaavn.com/api.php?__call=webapi.get` +
+          `&token=${encodeURIComponent(token)}` +
+          `&type=playlist&p=1&n=200&includeMetaTags=0` +
+          `&ctx=wap6dot0&api_version=4&_format=json&_marker=0`;
+
+        try {
+          const detailRaw = await axios.get(detailURL, {
+            headers: { "User-Agent": "Mozilla/5.0" }
+          });
+
+          const detail = cleanJSON(detailRaw.data);
+
+          const songIDs = detail?.list?.map(song => song.id) || [];
+
+          return {
+            ...chart,
+            songs: songIDs
+          };
+        } catch (e) {
+          return {
+            ...chart,
+            songs: []
+          };
+        }
+      })
+    );
+
     return res.status(200).json({
       success: true,
       language: lang,
-      raw: data
+      count: enrichedCharts.length,
+      results: enrichedCharts
     });
 
   } catch (err) {
