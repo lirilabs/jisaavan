@@ -5,47 +5,89 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   try {
-    // Query params
-    const lang = req.query.lang || "tamil";   // language
-    const page = Number(req.query.page) || 1; // page number
-    const limit = Number(req.query.limit) || 20; // items per page
+    const lang = req.query.lang || "tamil";
 
-    const url =
+    // STEP 1: Get radio stations for the language
+    const radioURL =
       `https://www.jiosaavn.com/api.php?__call=webradio.getFeaturedStations&api_version=4&_format=json&_marker=0&ctx=wap6dot0&languages=${lang}`;
 
-    const response = await axios.get(url, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
+    const radioRes = await axios.get(radioURL, { headers: { "User-Agent": "Mozilla/5.0" } });
 
-    // Clean malformed JSON
-    let data = response.data;
-    if (typeof data === "string") {
-      data = data.trim();
-      if (data.startsWith("(") && data.endsWith(")")) {
-        data = data.slice(1, -1);
-      }
-      const idx = data.indexOf("{");
-      if (idx > 0) data = data.slice(idx);
-      data = JSON.parse(data);
+    let radioData = radioRes.data;
+    if (typeof radioData === "string") {
+      radioData = radioData.trim();
+      if (radioData.startsWith("(")) radioData = radioData.slice(1);
+      if (radioData.endsWith(")")) radioData = radioData.slice(0, -1);
+      radioData = JSON.parse(radioData);
     }
 
-    // Pagination logic
-    const total = data.length;
-    const totalPages = Math.ceil(total / limit);
+    // Take first radio only for now
+    const firstStation = radioData[0];
+    if (!firstStation) {
+      return res.json({ success: false, error: "No radio stations found" });
+    }
 
-    const start = (page - 1) * limit;
-    const end = start + limit;
+    // STEP 2: Start radio and get first song
+    const stationName = encodeURIComponent(firstStation.title);
+    const createStationURL =
+      `https://www.jiosaavn.com/api.php?__call=webradio.createStation&stationName=${stationName}&type=featured&language=${lang}&api_version=4&_format=json&_marker=0&ctx=web6dot0`;
 
-    const results = data.slice(start, end);
+    const createRes = await axios.get(createStationURL, { headers: { "User-Agent": "Mozilla/5.0" } });
+
+    let stationData = createRes.data;
+    if (typeof stationData === "string") {
+      stationData = stationData.trim();
+      if (stationData.startsWith("(")) stationData = stationData.slice(1);
+      if (stationData.endsWith(")")) stationData = stationData.slice(0, -1);
+      stationData = JSON.parse(stationData);
+    }
+
+    const songs = stationData?.list || [];
+    if (songs.length === 0) {
+      return res.json({ success: false, error: "Radio has no songs" });
+    }
+
+    const firstSong = songs[0];
+    const encryptedURL = firstSong.more_info?.encrypted_media_url;
+
+    if (!encryptedURL) {
+      return res.json({ success: false, error: "Song missing encrypted_media_url" });
+    }
+
+    // STEP 3: Generate MP3 URL using encrypted_media_url
+    const authURL =
+      `https://www.jiosaavn.com/api.php?__call=song.generateAuthToken&url=${encodeURIComponent(
+        encryptedURL
+      )}&bitrate=128&api_version=4&_format=json&ctx=web6dot0&_marker=0`;
+
+    const authRes = await axios.get(authURL, { headers: { "User-Agent": "Mozilla/5.0" } });
+
+    let authData = authRes.data;
+    if (typeof authData === "string") {
+      authData = authData.trim();
+      if (authData.startsWith("(")) authData = authData.slice(1);
+      if (authData.endsWith(")")) authData = authData.slice(0, -1);
+      authData = JSON.parse(authData);
+    }
+
+    // Final song data
+    const result = {
+      station: firstStation.title,
+      song: {
+        id: firstSong.id,
+        title: firstSong.title,
+        image: firstSong.image,
+        artist: firstSong.more_info?.artistMap?.primary_artists?.[0]?.name || "",
+        album: firstSong.more_info?.album || "",
+        mp3_128: authData.auth_url || null,
+        type: authData.type || "mp4"
+      }
+    };
 
     return res.status(200).json({
       success: true,
       language: lang,
-      total,
-      page,
-      limit,
-      totalPages,
-      results
+      result
     });
 
   } catch (err) {
@@ -55,4 +97,3 @@ module.exports = async (req, res) => {
     });
   }
 };
-
