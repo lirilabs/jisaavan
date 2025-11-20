@@ -5,9 +5,9 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   try {
-    const lang = req.query.lang || "tamil";  // language change
+    const lang = req.query.lang || "tamil";  // language
     const page = req.query.page || 1;        // pagination
-    const limit = req.query.n || 50;         // default 50
+    const limit = req.query.n || 50;         // count
 
     const url = `https://www.jiosaavn.com/api.php?__call=content.getAlbums&api_version=4&_format=json&_marker=0&n=${limit}&p=${page}&ctx=wap6dot0&languages=${lang}`;
 
@@ -16,10 +16,17 @@ module.exports = async (req, res) => {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    // JioSaavn sends malformed JSON → clean before parsing
-    const cleaned = JSON.parse(data.trim());
+    // SAFELY PARSE THE RESPONSE
+    let json;
+    if (typeof data === "string") {
+      // JioSaavn wraps JSON → remove extra characters
+      const cleaned = data.trim().replace(/^\(|\)$/g, "");
+      json = JSON.parse(cleaned);
+    } else {
+      json = data; // already JSON
+    }
 
-    const list = cleaned.data.map(item => ({
+    const list = json.data.map(item => ({
       id: item.id,
       title: item.title,
       subtitle: item.subtitle,
