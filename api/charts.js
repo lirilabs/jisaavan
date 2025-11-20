@@ -5,10 +5,8 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   try {
-    const lang = (req.query.lang || "tamil").toLowerCase();
-
     const url =
-      "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=wap6dot0";
+      "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0";
 
     const response = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" }
@@ -16,7 +14,7 @@ module.exports = async (req, res) => {
 
     let data = response.data;
 
-    // CLEAN JSON (this endpoint returns ARRAY)
+    // CLEAN JSON (raw array)
     if (typeof data === "string") {
       data = data.trim();
       if (data.startsWith("(") && data.endsWith(")")) {
@@ -25,18 +23,12 @@ module.exports = async (req, res) => {
       data = JSON.parse(data);
     }
 
-    // LANGUAGE FILTER: only include items that contain 'language'
-    const filtered = data.filter(item => {
-      if (!item.language) return false;  // skip if no language field
-      return item.language.toLowerCase() === lang;
-    });
-
-    return res.status(200).json({
+    // Pretty formatted output
+    return res.status(200).send(JSON.stringify({
       success: true,
-      language: lang,
-      count: filtered.length,
-      results: filtered
-    });
+      total: data.length,
+      results: data
+    }, null, 2)); // <-- PRETTY JSON (indentation)
 
   } catch (err) {
     return res.status(500).json({
@@ -45,3 +37,4 @@ module.exports = async (req, res) => {
     });
   }
 };
+
