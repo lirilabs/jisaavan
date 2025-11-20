@@ -5,36 +5,48 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   try {
+    // Language & pagination
+    const lang = req.query.lang || "tamil";
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 10;
+
     const url =
       "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=wap6dot0";
 
     const response = await axios.get(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
 
     let data = response.data;
 
-    // Safe JSON parse (JioSaavn returns ( ... ))
+    // CLEAN JSON STRING (ARRAY)
     if (typeof data === "string") {
       data = data.trim();
       if (data.startsWith("(") && data.endsWith(")")) {
         data = data.slice(1, -1);
       }
-      const idx = data.indexOf("{");
-      if (idx > 0) data = data.slice(idx);
       data = JSON.parse(data);
     }
 
-    // Filter for ONLY Tamil charts
-    const tamilCharts = data.filter(item => item.language === "tamil");
+    // Filter charts by language
+    const filtered = data.filter(item => item.language === lang);
+
+    // Pagination
+    const total = filtered.length;
+    const totalPages = Math.ceil(total / limit);
+    const start = (page - 1) * limit;
+    const end = start + limit;
+
+    const results = filtered.slice(start, end);
 
     return res.status(200).json({
       success: true,
-      language: "tamil",
-      count: tamilCharts.length,
-      results: tamilCharts
+      language: lang,
+      page,
+      limit,
+      total,
+      totalPages,
+      results
     });
 
   } catch (err) {
