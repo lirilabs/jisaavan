@@ -1,6 +1,6 @@
 const axios = require("axios");
 
-// Clean Saavn JSON wrapper
+// Clean JioSaavn JSON wrapper
 function cleanJSON(input) {
   if (typeof input === "string") {
     let data = input.trim();
@@ -14,26 +14,26 @@ function cleanJSON(input) {
   return input;
 }
 
-// Extract token from playlist URL
+// Extract playlist token from perma_url
 function extractToken(url) {
   return url.split("/").pop();
 }
 
-// Extract “best possible” artist
+// Extract best possible artist
 function extractArtist(meta, detail) {
-  // Artists on cover
+  // Artists On Cover
   if (detail.header_desc) {
     const match = detail.header_desc.match(/Artists On Cover:\s*([^,\n]+)/i);
     if (match) return match[1].trim();
   }
 
-  // First primary artist from first song
+  // Primary artist of first song
   const primary = detail?.list?.[0]?.more_info?.artistMap?.primary_artists;
   if (primary?.length > 0) {
     return primary[0].name;
   }
 
-  // Fallback
+  // Fallback to subtitle
   return meta.subtitle || "";
 }
 
@@ -42,35 +42,43 @@ module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json");
 
   try {
-    // Language input
+    // Get language input
     const lang = (req.query.lang || "hindi").toLowerCase();
 
-    // Map language → ctx
-    const ctxMap = {
-      hindi: "web6dot0",
-      english: "web6dot0",
-      tamil: "wap6dot0"
+    // FULL URL mapping EXACTLY as you provided
+    const langURL = {
+      hindi:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+      english: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+      telugu:  "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+      bengali: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+      punjabi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+      marathi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
+
+      // Tamil = ONLY one using wap6dot0
+      tamil:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=wap6dot0"
     };
 
-    const ctx = ctxMap[lang] || "web6dot0";
+    const chartsURL = langURL[lang] || langURL["hindi"];
 
-    // 1. Fetch charts list
-    const chartsURL = `https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=${ctx}`;
-
-    const chartsRaw = await axios.get(chartsURL, {
+    // 1. Fetch charts
+    const rawCharts = await axios.get(chartsURL, {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
 
-    let charts = cleanJSON(chartsRaw.data);
+    let charts = cleanJSON(rawCharts.data);
+
+    // Filter charts for selected language
     charts = charts.filter(item => item.language === lang);
 
-    // 2. Fetch playlist details (parallel)
-    const fullCharts = await Promise.all(
+    // 2. Fetch playlist details (runs in parallel)
+    const finalOutput = await Promise.all(
       charts.map(async (chart) => {
         const token = extractToken(chart.perma_url);
 
         const detailURL =
-          `https://www.jiosaavn.com/api.php?__call=webapi.get&token=${encodeURIComponent(token)}&type=playlist&p=1&n=200&includeMetaTags=0&ctx=wap6dot0&api_version=4&_format=json&_marker=0`;
+          `https://www.jiosaavn.com/api.php?__call=webapi.get&` +
+          `token=${encodeURIComponent(token)}&type=playlist&p=1&n=200` +
+          `&includeMetaTags=0&ctx=wap6dot0&api_version=4&_format=json&_marker=0`;
 
         const detailRaw = await axios.get(detailURL, {
           headers: { "User-Agent": "Mozilla/5.0" }
@@ -78,8 +86,7 @@ module.exports = async (req, res) => {
 
         const detail = cleanJSON(detailRaw.data);
         const artistName = extractArtist(chart, detail);
-
-        const songIDs = detail.list?.map(s => s.id) || [];
+        const songIDs = detail?.list?.map(s => s.id) || [];
 
         return {
           id: chart.id,
@@ -91,12 +98,11 @@ module.exports = async (req, res) => {
       })
     );
 
-    // Output
     return res.status(200).json({
       success: true,
       language: lang,
-      count: fullCharts.length,
-      results: fullCharts
+      count: finalOutput.length,
+      results: finalOutput
     });
 
   } catch (err) {
