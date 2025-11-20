@@ -1,6 +1,5 @@
 const axios = require("axios");
 
-// Clean Saavn wrapped JSON
 function cleanJSON(input) {
   if (typeof input === "string") {
     let data = input.trim();
@@ -14,9 +13,52 @@ function cleanJSON(input) {
   return input;
 }
 
-// Extract token from perma_url
-function getToken(perma_url) {
-  return perma_url.split("/").pop();
+function getToken(url) {
+  return url.split("/").pop();
+}
+
+async function getSongURL(enc, bitrate = 128) {
+  try {
+    const api =
+      `https://www.jiosaavn.com/api.php?__call=song.generateAuthToken` +
+      `&url=${encodeURIComponent(enc)}` +
+      `&bitrate=${bitrate}` +
+      `&api_version=4&_format=json&_marker=0&ctx=wap6dot0`;
+
+    const res = await axios.get(api, { headers: { "User-Agent": "Mozilla/5.0" } });
+    const data = cleanJSON(res.data);
+
+    return data.auth_url || null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildSongObject(song) {
+  const enc = song.more_info?.encrypted_media_url;
+  const artist =
+    song.more_info?.artistMap?.primary_artists?.[0]?.name ||
+    song.subtitle?.split("-")?.[0]?.trim() ||
+    "";
+
+  let url128 = null;
+  let url320 = null;
+
+  if (enc) {
+    url128 = await getSongURL(enc, 128);
+    url320 = await getSongURL(enc, 320);
+  }
+
+  return {
+    id: song.id,
+    title: song.title,
+    image: song.image,
+    artist: artist,
+    album: song.more_info?.album || "",
+    mp3_128: url128,
+    mp3_320: url320,
+    m4a: url128 ? url128.replace(".mp4", ".m4a") : null
+  };
 }
 
 module.exports = async (req, res) => {
@@ -26,7 +68,6 @@ module.exports = async (req, res) => {
   try {
     const lang = (req.query.lang || "hindi").toLowerCase();
 
-    // Full URLs EXACTLY as you provided
     const langURL = {
       hindi:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
       english: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
@@ -35,19 +76,15 @@ module.exports = async (req, res) => {
       punjabi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
       marathi: "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=web6dot0",
 
-      // Tamil only
       tamil:   "https://www.jiosaavn.com/api.php?__call=content.getCharts&api_version=4&_format=json&_marker=0&ctx=wap6dot0"
     };
 
-    // 1. Fetch raw charts
-    const raw = await axios.get(langURL[lang], {
+    const chartsRes = await axios.get(langURL[lang], {
       headers: { "User-Agent": "Mozilla/5.0" }
     });
+    const charts = cleanJSON(chartsRes.data);
 
-    const charts = cleanJSON(raw.data);
-
-    // 2. For each chart → fetch playlist details
-    const enrichedCharts = await Promise.all(
+    const results = await Promise.all(
       charts.map(async chart => {
         const token = getToken(chart.perma_url);
 
@@ -57,39 +94,39 @@ module.exports = async (req, res) => {
           `&type=playlist&p=1&n=200&includeMetaTags=0` +
           `&ctx=wap6dot0&api_version=4&_format=json&_marker=0`;
 
+        let detailData;
+
         try {
-          const detailRaw = await axios.get(detailURL, {
+          const detailRes = await axios.get(detailURL, {
             headers: { "User-Agent": "Mozilla/5.0" }
           });
-
-          const detail = cleanJSON(detailRaw.data);
-
-          const songIDs = detail?.list?.map(song => song.id) || [];
-
-          return {
-            ...chart,
-            songs: songIDs
-          };
-        } catch (e) {
-          return {
-            ...chart,
-            songs: []
-          };
+          detailData = cleanJSON(detailRes.data);
+        } catch {
+          detailData = { list: [] };
         }
+
+        const songs = await Promise.all(
+          (detailData.list || []).map(song => buildSongObject(song))
+        );
+
+        return {
+          id: chart.id,
+          title: chart.title,
+          image: chart.image,
+          perma_url: chart.perma_url,
+          songs
+        };
       })
     );
 
     return res.status(200).json({
       success: true,
       language: lang,
-      count: enrichedCharts.length,
-      results: enrichedCharts
+      count: results.length,
+      results
     });
 
   } catch (err) {
-    return res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 };
