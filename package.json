@@ -1,0 +1,13 @@
+{
+  "name": "vercel-jiosaavn-api",
+  "version": "1.0.0",
+  "description": "JioSaavn scraper API for Vercel",
+  "main": "api/jiosaavn.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "axios": "^1.6.7"
+  }
+}
